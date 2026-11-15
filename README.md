@@ -57,8 +57,8 @@ python3 python/plot_results.py incremental resultados_inc.csv    figuras/
 Notas para el informe:
 - Registrar la máquina (CPU, RAM, compilador y flags: `-O2`).
 - Los tiempos son de reloj de pared (`std::chrono::steady_clock`), mediana de `--reps`
-  repeticiones; la copia de la entrada queda fuera del cronómetro. Si el curso exige
-  `uhr`, cambiar la lambda `time_ms` en `cpp/bench.cpp`.
+  repeticiones; la copia de la entrada queda fuera del cronómetro. Pero si usamos 
+  `uhr`, hay que cambiar la lambda `time_ms` en `cpp/bench.cpp`.
 - `--max-ms` (defecto 10000) omite los tamaños mayores cuando un algoritmo ya pasó ese
   tiempo (Jarvis en `circle` con n = 1e5 ya tarda ~16 s, porque h ≈ n).
 - Las filas `dynamic` del modo estático son construir el hull insertando los n puntos

@@ -1,0 +1,22 @@
+# Binarios compilados (make / hull_gui.py los generan)
+bin/
+*.exe
+*.o
+*.obj
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Resultados de experimentos y figuras generadas
+resultados_*.csv
+figuras/
+salida/
+
+# Editor / sistema
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

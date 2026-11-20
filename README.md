@@ -76,6 +76,24 @@ la línea roja punteada es el hull anterior). Teclas: `g` 40 puntos al azar, `o`
 círculo, `1-4` recalcular desde cero con cada algoritmo y compararlo con el incremental,
 `i` volver al incremental, `r` reiniciar, `q` salir.
 
+### Visualizador de escritorio (`python/hull_gui.py`)
+
+```bash
+python python/hull_gui.py
+```
+
+Aplicación local con `tkinter` (solo biblioteca estándar). Usa el C++ real vía `bin/hull_cli`; si no
+existe, se compila sola con g++.
+
+- Pestaña **Algoritmos**: selector de algoritmo (Andrew, Jarvis, QuickHull, Chan) con su costo y fuente,
+  generadores de puntos (uniforme, gaussiana, círculo, disco, grilla, casi colineales) y número de
+  vértices del hull. No admite puntos a mano. Incluye una **animación paso a paso** del algoritmo
+  elegido (`▶ Animar`, `⏭ Paso`, velocidad ajustable) que se puede saltar con `⏩ Resultado`; al
+  terminar verifica que el hull animado coincida con el del C++. Las animaciones están en
+  `python/hull_steps.py` (reproducen la lógica de `cpp/hull_algorithms.hpp`; el C++ no se modificó).
+- Pestaña **Inserción (DynamicHull)**: solo para el algoritmo modificado; clic o coordenadas (x, y) para
+  insertar, con aviso de si el hull cambió, hull anterior punteado y registro de inserciones.
+
 ## Notas de implementación (para la sección "Otras consideraciones")
 
 - **Andrew**: ordena y arma las cadenas inferior y superior con una pila (se descartan

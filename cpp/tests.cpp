@@ -8,6 +8,7 @@
 //   (b) todos los algoritmos coinciden entre sí;
 //   (c) DynamicHull insertando punto a punto coincide con recalcular desde cero
 //       en cada paso, y su bandera "cambió" es correcta.
+
 #include "dynamic_hull.hpp"
 #include "hull_algorithms.hpp"
 

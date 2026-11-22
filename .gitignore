@@ -11,9 +11,12 @@ __pycache__/
 venv/
 
 # Resultados de experimentos y figuras generadas
-resultados_*.csv
+resultados
+resultados_quick
+logs
 figuras/
 salida/
+
 
 # Editor / sistema
 .vscode/

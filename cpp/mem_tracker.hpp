@@ -1,8 +1,13 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <new>
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
 
 /*
  * MemTracker: cuenta bytes pedidos al heap mientras 'active' es true.
@@ -39,6 +44,50 @@ struct MemTracker {
     static void stop() {
         active = false;
         tracking_paused = false;
+    }
+};
+
+/**
+ * @brief Rastreador del pico adicional de RSS (VmHWM sobre VmRSS base en Linux).
+ */
+struct RssTracker {
+    static inline long long base_kb = -1;
+    static inline bool ok = false;
+
+    static long long read_kb(const char* key) {  // "VmRSS:" / "VmHWM:" en /proc/self/status
+        std::FILE* f = std::fopen("/proc/self/status", "r");
+        if (!f) return -1;
+        char line[256];
+        long long v = -1;
+        const std::size_t len = std::strlen(key);
+        while (std::fgets(line, sizeof line, f)) {
+            if (std::strncmp(line, key, len) == 0) {
+                std::sscanf(line + len, "%lld", &v);
+                break;
+            }
+        }
+        std::fclose(f);
+        return v;
+    }
+
+    static void start() {
+        ok = false;
+#if defined(__GLIBC__)
+        malloc_trim(0);  // devuelve al SO lo liberado antes
+#endif
+        std::FILE* f = std::fopen("/proc/self/clear_refs", "w");  // "5" = reiniciar VmHWM
+        if (!f) return;
+        const bool w = std::fputs("5", f) >= 0;
+        const bool c = std::fclose(f) == 0;  // el error de escritura aparece al cerrar
+        base_kb = read_kb("VmRSS:");
+        ok = w && c && base_kb >= 0;
+    }
+
+    static long long peak_bytes() {
+        if (!ok) return -1;
+        const long long hwm = read_kb("VmHWM:");
+        if (hwm < 0) return -1;
+        return (hwm > base_kb ? hwm - base_kb : 0) * 1024LL;
     }
 };
 

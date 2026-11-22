@@ -2,21 +2,23 @@
 ESQUEMA DE BENCHMARK
 importaciones de bibliotecas, generadores (generators.hpp), agregadores (point_adders.hpp),
 algoritmos estáticos (hull_algorithms.hpp), estructura dinámica (dynamic_hull.hpp)
-y rastreador de memoria heap (mem_tracker.hpp)
+y rastreadores de memoria (mem_tracker.hpp: MemTracker = heap, RssTracker = RSS del SO)
 
-struct Config // contiene los parametros de ejecución (incluye warmup_runs)
+struct Config // contiene los parametros de ejecución
 
 // Utilidades y funciones auxiliares
 mix()               // mezcla determinísticamente dos enteros de 64 bits (SplitMix64) para semillas
 ms_between()        // calcula la diferencia en milisegundos entre dos instantes (steady_clock)
 progress()          // imprime en std::cerr el avance actual (experimento, dataset, n y repetición)
-shrink_half()       // escala coordenadas a [-R/2, R/2]^2 dejando margen para inserciones extremas en exp2
 static_algos()      // devuelve la lista de algoritmos estáticos evaluados en exp1 (andrew, jarvis, quickhull)
 recalc_batch_size() // determina la cantidad m de puntos nuevos a insertar en exp2 (mut_ops o min(n/10, 1000))
 print_usage()       // imprime en std::cerr la ayuda y opciones de línea de comandos
 
 class Writter // calcula métricas (media, desv. estándar, varianza, cuartiles) y escribe filas en un .csv
-class Collector // mapa que acumula tiempos, memoria y "changed" por (dataset, algo) para un n
+class Collector // mapa que acumula tiempos, memoria (heap y RSS), h y "changed" por (dataset, algo) para un n
+
+Modo n fijo (--fixed-n N): n = N constante y --lower/--upper/--step recorren h (tamaño del hull)
+en vez de n; los datasets pasan a ser gen::h_datasets() (hull_h). Sin --fixed-n, x == n.
 
 exp1 // Convex-Hull estatico
 exp2 // Convex-Hull dinámico: costo de ACTUALIZAR el hull tras insertar m puntos nuevos
@@ -24,7 +26,7 @@ exp2 // Convex-Hull dinámico: costo de ACTUALIZAR el hull tras insertar m punto
      //   (b) recompute_andrew : Andrew desde cero sobre los n+m puntos                
 
 main(){
-1. validar argumentos de entrada (incluyendo --warmup-runs o -h/--help -> print_usage)
+1. validar argumentos de entrada
 2. validar parametros
 3. seleccionar experimentos (exp1, exp2 o all)
 4. abrir Writter y correr experimentos
@@ -36,7 +38,8 @@ exp1(configuración, escritor)
 
     warm-up previo al experimento (warmup_runs iteraciones sobre uniform_square(4096))
 
-    for n = lower -> upper (paso geometrico: n *= step)
+    for x = lower -> upper (paso geometrico: x *= step)      // x es n, o h si hay --fixed-n
+        fijar n (= x, o fixed_n) y gen::h_target = x
         instanciar colector para el tamaño n
 
         for each gen
@@ -54,9 +57,10 @@ exp1(configuración, escritor)
                         ejecutar convex-hull estático
                         terminar medicion de tiempo
                         acumular tiempo del lote con ms_between()
+                        registrar h = tamaño del hull resultante
 
                     calcular media del lote (batch_k)
-                    guardar tiempo medio en el colector
+                    guardar tiempo medio y h en el colector (h_mean = promedio sobre repeticiones)
 
                     si tiempo_medio > max_ms -> agregar (gen, algo) a omitidos
 
@@ -66,11 +70,12 @@ exp1(configuración, escritor)
                 si (gen, algo) está en omitidos -> saltar
 
                 copiar datos de entrada
-                empezar medicion de memoria (MemTracker::start)
+                empezar medicion de RSS (RssTracker::start) y luego de heap (MemTracker::start)
                 ejecutar convex-hull estático
-                leer pico de memoria y detener medicion (MemTracker::stop)
+                leer pico de heap y detener medicion (MemTracker::stop)
+                leer pico de RSS (RssTracker::peak_bytes, fuera de la ventana del heap-tracker)
 
-                guardar pico de memoria en el colector
+                guardar picos de heap y RSS en el colector
 
         volcar colector al escritor
 
@@ -80,7 +85,8 @@ exp2(configuración, escritor)
 
     warm-up previo al experimento (warmup_runs iteraciones para DynamicHull y andrew)
 
-    for n = lower -> upper (paso geometrico: n *= step)
+    for x = lower -> upper (paso geometrico: x *= step)      // x es n, o h si hay --fixed-n
+        fijar n (= x, o fixed_n) y gen::h_target = x
         instanciar colector para el tamaño n
         determinar cantidad m de puntos nuevos a agregar con recalc_batch_size()
 
@@ -90,14 +96,15 @@ exp2(configuración, escritor)
                 // 1. Fase de Tiempo
                 for r = 1 -> runs
                     reportar avance con progress()
-                    generar n puntos iniciales con gen(n, seed_base con mix) y aplicar shrink_half()
+                    generar n puntos iniciales con gen(n, seed_base con mix)
                     generar m puntos nuevos con add_gen(base_pts, m, seed_mut con mix)
-                    construir hull previo con DynamicHull 
+                    construir hull previo con DynamicHull y registrar h = initial_hull.size()
+                        (h del hull PREVIO, el que determina el costo del DynamicHull)
                     armar el arreglo all = base + nuevos para la línea base 
 
                     for 1 -> batch_k
                         // (a) incremental
-                        clonar hull previo (FUERA del cronómetro)
+                        clonar hull previo
                         empezar medicion de tiempo
                         insertar los m puntos nuevos en el hull clonado   
                         extraer el convex hull actualizado con hull()     
@@ -111,13 +118,13 @@ exp2(configuración, escritor)
                         terminar medicion de tiempo
                         acumular tiempo del lote (recompute_andrew) con ms_between()
 
-                    calcular medias de cada lote (batch_k) y guardar ambos tiempos medios en el colector
+                    calcular medias de cada lote (batch_k) y guardar ambos tiempos medios y h en el colector
 
                 // 2. Fase de Memoria
-                generar base (con shrink_half) y nuevos con semillas de memoria (mix)
+                generar base y nuevos con semillas de memoria (mix)
                 armar mem_all = mem_base + mem_mut
-                (a) medir pico de DynamicHull: construir hull previo, insertar m puntos y extraer hull()
-                (b) medir pico de andrew sobre los n+m puntos
+                (a) medir picos (heap y RSS) de DynamicHull: construir hull previo, insertar m puntos y extraer hull()
+                (b) medir picos (heap y RSS) de andrew sobre los n+m puntos
                 guardar picos de memoria y changed en el colector
 
         volcar colector al escritor
@@ -154,14 +161,15 @@ struct Config {
     std::string exp = "all";       ///< Experimento a ejecutar: 'exp1', 'exp2' o 'all'.
     std::string out = "resultados.csv"; ///< Ruta del archivo CSV de salida.
     std::size_t runs = 32;         ///< Cantidad de repeticiones por tamaño 'n'.
-    std::size_t lower = 1024;      ///< Tamaño inicial de entrada 'n'.
-    std::size_t upper = 1u << 20;  ///< Tamaño máximo de entrada 'n'.
-    std::size_t step = 2;          ///< Factor multiplicativo geométrico para 'n'.
+    std::size_t lower = 1024;      ///< Tamaño inicial de entrada 'n' (o de 'h' si fixed_n > 0).
+    std::size_t upper = 1u << 20;  ///< Tamaño máximo de entrada 'n' (o de 'h' si fixed_n > 0).
+    std::size_t step = 2;          ///< Factor multiplicativo geométrico para 'n' (o 'h' si fixed_n > 0).
     std::size_t batch_k = 1;       ///< Iteraciones internas por repetición.
     std::size_t warmup_runs = 3;   ///< Iteraciones de warm-up previo a cada experimento.
     std::size_t mut_ops = 0;       ///< Cantidad 'm' de puntos nuevos en 'exp2' (0 = automático).
     double max_ms = 10000.0;       ///< Límite de tiempo en ms antes de omitir en 'exp1'.
     std::uint64_t seed = 1;        ///< Semilla base para la generación reproducible.
+    std::size_t fixed_n = 0;       ///< >0: n fijo; --lower/--upper/--step recorren h (dataset hull_h).
 };
 
 /**
@@ -199,29 +207,16 @@ static void progress(const std::string& tag, const std::string& ds, std::size_t 
     std::cerr << "\r[" << tag << " | " << ds << "] n=" << n << "  rep " << (r + 1) << "/" << R << "      " << std::flush;
 }
 
-/**
- * @brief Reduce a la mitad el rango de coordenadas de un conjunto de puntos.
- *
- * Deja el conjunto dentro de '[-R/2, R/2]^2' con margen hacia '±R' para que
- * los agregadores de casos extremos puedan insertar puntos fuera del hull previo.
- *
- * @param p Vector de puntos a escalar.
- * @return Vector de puntos con coordenadas divididas entre 2.
- */
-static std::vector<Point> shrink_half(std::vector<Point> p) {
-    for (auto& q : p) {
-        q.x /= 2;
-        q.y /= 2;
-    }
-    return p;
-}
-
 /*
- * Writter: una fila por (dataset, n, algo). Columnas originales primero; las nuevas al final.
- *   runs        : número de muestras efectivamente tomadas
- *   t_var_ms2   : varianza muestral (n-1) de los tiempos = t_stdev_ms^2
- *   changed     : (solo exp2/dynamic_hull) cuántas de las m inserciones modificaron el hull; -1 = no aplica
- *   status      : ok | truncado (menos de --runs muestras por superar --max-ms) | omitido (sin muestras)
+ * Writter: una fila por (dataset, n, algo).
+ *   runs           : número de muestras efectivamente tomadas
+ *   t_var_ms2      : varianza muestral (n-1) de los tiempos = t_stdev_ms^2
+ *   changed        : (solo exp2/dynamic_hull) cuántas de las m inserciones modificaron el hull; -1 = no aplica
+ *   status         : ok | truncado (menos de --runs muestras por superar --max-ms) | omitido (sin muestras)
+ *   peak_mem_bytes : pico adicional de heap (bytes pedidos a operator new); -1 = no medido
+ *   peak_rss_bytes : pico adicional de RSS en bytes (-1 si no medido / no aplica)
+ *   h_mean         : tamaño promedio del hull sobre las repeticiones (-1 si sin muestras);
+ *                    en exp2 es el h del hull PREVIO a las inserciones
  */
 
 /**
@@ -241,22 +236,15 @@ public:
             std::exit(EXIT_FAILURE);
         }
         f << "dataset,n,algo,runs,t_mean_ms,t_stdev_ms,t_Q0,t_Q1,t_Q2,t_Q3,t_Q4,peak_mem_bytes,"
-            "t_var_ms2,changed,status\n";
+            "t_var_ms2,changed,status,peak_rss_bytes,h_mean\n";
     }
 
     /**
      * @brief Calcula media, desviación estándar, varianza y cuartiles y escribe una fila.
-     * @param ds Nombre del dataset o escenario.
-     * @param n Tamaño de entrada.
-     * @param algo Nombre del algoritmo o variante evaluada.
-     * @param v Vector de muestras de tiempo en milisegundos.
-     * @param peak_mem Pico de memoria adicional medido en bytes.
-     * @param changed Cantidad de inserciones que alteraron el hull (-1 si no aplica).
-     * @param target_runs Cantidad objetivo de repeticiones configuradas.
      */
     void row(const std::string& ds, std::size_t n, const std::string& algo,
-            std::vector<double> v, std::size_t peak_mem, long long changed,
-            std::size_t target_runs) {
+            std::vector<double> v, long long peak_mem, long long peak_rss, double h_mean,
+            long long changed, std::size_t target_runs) {
         if (v.empty()) return;
         const double m = std::accumulate(v.begin(), v.end(), 0.0) / static_cast<double>(v.size());
         double ss = 0.0;
@@ -270,7 +258,8 @@ public:
         f << ds << ',' << n << ',' << algo << ',' << v.size() << ','
         << m << ',' << sd << ',' << q(0.0) << ',' << q(0.25) << ',' << q(0.5) << ','
         << q(0.75) << ',' << q(1.0) << ',' << peak_mem << ','
-        << var << ',' << changed << ',' << (v.size() < target_runs ? "truncado" : "ok") << '\n';
+        << var << ',' << changed << ',' << (v.size() < target_runs ? "truncado" : "ok") << ','
+          << peak_rss << ',' << std::to_string(h_mean) << '\n';    // to_string: evita 1.04858e+06
         f.flush();
     }
 
@@ -282,45 +271,53 @@ public:
      */
     void skipped_row(const std::string& ds, std::size_t n, const std::string& algo) {
         f << ds << ',' << n << ',' << algo << ",0";
-        for (int i = 0; i < 11; ++i) f << ',';  // 10 campos numéricos vacíos
-        f << "omitido\n";
+        for (int i = 0; i < 11; ++i) f << ',';
+        f << "omitido,,\n";   // status + peak_rss_bytes y h_mean vacíos
         f.flush();
     }
 };
 
 /**
- * @brief Acumula tiempos, pico de memoria y contador de cambios por '(dataset, algo)' para un 'n'.
+ * @brief Acumula tiempos, picos de memoria (heap y RSS), h y contador de cambios por '(dataset, algo)' para un 'n'.
  */
 class Collector {
     struct Entry {
         std::vector<double> times_ms; ///< Muestras de tiempo promedio por repetición (ms).
-        std::size_t peak_mem = 0;     ///< Pico de memoria adicional en bytes.
+        long long peak_mem = -1;      ///< Pico de heap adicional en bytes (-1 si no medido).
+        long long peak_rss = -1;      ///< Pico de RSS adicional en bytes (-1 si no medido).
         long long changed = -1;       ///< Número de inserciones que modificaron el hull (-1 si N/A).
+        double h_sum = 0.0;           ///< Suma de los tamaños de hull h de cada repetición.
     };
 
     std::map<std::tuple<std::string, std::string>, Entry> m; ///< Mapa '(dataset, algo)' -> métricas.
 
 public:
     /**
-     * @brief Registra una muestra de tiempo para la pareja '(ds, algo)'.
+     * @brief Registra una muestra de tiempo y el tamaño del hull para la pareja '(ds, algo)'.
      * @param ds Nombre del dataset o escenario.
      * @param algo Nombre del algoritmo.
      * @param t_ms Tiempo promedio del lote en milisegundos.
+     * @param h Tamaño del hull asociado a la muestra.
      */
-    void add_time(const std::string& ds, const std::string& algo, double t_ms) {
-        m[{ds, algo}].times_ms.push_back(t_ms);
+    void add_time(const std::string& ds, const std::string& algo, double t_ms, std::size_t h) {
+        Entry& e = m[{ds, algo}];
+        e.times_ms.push_back(t_ms);
+        e.h_sum += static_cast<double>(h);
     }
 
     /**
-     * @brief Registra el pico de memoria y, opcionalmente, el contador 'changed'.
+     * @brief Registra los picos de memoria (heap y RSS) y, opcionalmente, el contador 'changed'.
      * @param ds Nombre del dataset o escenario.
      * @param algo Nombre del algoritmo.
-     * @param bytes Pico de memoria adicional en bytes.
+     * @param bytes Pico de heap adicional en bytes.
+     * @param rss Pico de RSS adicional en bytes (-1 si no se pudo medir).
      * @param changed Cantidad de inserciones que cambiaron el hull (-1 por defecto).
      */
-    void set_mem(const std::string& ds, const std::string& algo, std::size_t bytes, long long changed = -1) {
+    void set_mem(const std::string& ds, const std::string& algo, std::size_t bytes, long long rss,
+            long long changed = -1) {
         Entry& e = m[{ds, algo}];
-        e.peak_mem = bytes;
+        e.peak_mem = static_cast<long long>(bytes);
+        e.peak_rss = rss;
         e.changed = changed;
     }
 
@@ -332,14 +329,17 @@ public:
      * @param skipped Conjunto opcional de celdas omitidas para emitir filas 'omitido'.
      */
     void flush(Writter& w, std::size_t n, std::size_t target_runs,
-               const std::set<std::pair<std::string, std::string>>* skipped = nullptr) {
+            const std::set<std::pair<std::string, std::string>>* skipped = nullptr) {
         for (auto& [key, e] : m) {
-            w.row(std::get<0>(key), n, std::get<1>(key), std::move(e.times_ms), e.peak_mem, e.changed,
-                  target_runs);
+            // h_mean se calcula ANTES del std::move (el orden de evaluación de argumentos no está definido)
+            const double h_mean = e.times_ms.empty() ? -1.0 : e.h_sum / static_cast<double>(e.times_ms.size());
+            w.row(std::get<0>(key), n, std::get<1>(key), std::move(e.times_ms), e.peak_mem, e.peak_rss, h_mean,
+                e.changed, target_runs);
         }
         if (skipped) {
+            // std::move dejó times_ms vacío, así que solo se mira si la clave existe
             for (const auto& [ds, algo] : *skipped) {
-                if (m.find({ds, algo}) == m.end() || m[{ds, algo}].times_ms.empty()) w.skipped_row(ds, n, algo);
+                if (m.find({ds, algo}) == m.end()) w.skipped_row(ds, n, algo);
             }
         }
         m.clear();
@@ -385,7 +385,7 @@ static std::size_t recalc_batch_size(const Config& c, std::size_t n) {
  */
 static void exp1(const Config& c, Writter& w) {
     const auto& algos = static_algos();
-    const auto& datasets = gen::all_datasets();
+    const auto& datasets = c.fixed_n ? gen::h_datasets() : gen::all_datasets();
     std::set<std::pair<std::string, std::string>> skipped; // (dataset, algo) que superaron max_ms
 
     // 0. Warm-up previo al experimento
@@ -399,11 +399,13 @@ static void exp1(const Config& c, Writter& w) {
         }
     }
 
-    for (std::size_t n = c.lower; n <= c.upper; n *= c.step) {
+    for (std::size_t x = c.lower; x <= c.upper; x *= c.step) {       
+        const std::size_t n = c.fixed_n ? c.fixed_n : x;
+        gen::h_target = x;                                           
         Collector col;
 
         for (const auto& ds : datasets) {
-            // 1. Fase de Tiempo (r = 0 .. runs - 1)
+            // 1. Fase de Tiempo
             for (std::size_t r = 0; r < c.runs; ++r) {
                 progress("exp1", ds.name, n, r, c.runs);
                 const std::uint64_t sd = mix(mix(mix(c.seed, 1), n), r);
@@ -414,6 +416,7 @@ static void exp1(const Config& c, Writter& w) {
                     if (skipped.count({ds.name, algo.name})) continue;
 
                     double batch_ms = 0.0;
+                    std::size_t h = 0;
                     for (std::size_t k = 0; k < c.batch_k; ++k) {
                         std::vector<Point> copy = base_pts;
                         const auto a = Clock::now();
@@ -421,10 +424,11 @@ static void exp1(const Config& c, Writter& w) {
                         const auto b = Clock::now();
 
                         batch_ms += ms_between(a, b);
+                        h = res.size();
                     }
 
                     const double mean_k_ms = batch_ms / static_cast<double>(c.batch_k);
-                    col.add_time(ds.name, algo.name, mean_k_ms);
+                    col.add_time(ds.name, algo.name, mean_k_ms, h);
 
                     if (mean_k_ms > c.max_ms) {
                         skipped.insert({ds.name, algo.name});
@@ -432,7 +436,7 @@ static void exp1(const Config& c, Writter& w) {
                 }
             }
 
-            // 2. Fase de Memoria (1 sola ejecución aislada sin cronómetro)
+            // 2. Fase de Memoria
             std::mt19937_64 rng_mem(mix(mix(c.seed, 999), n));
             const std::vector<Point> mem_pts = ds.fn(n, rng_mem);
 
@@ -440,12 +444,14 @@ static void exp1(const Config& c, Writter& w) {
                 if (skipped.count({ds.name, algo.name})) continue;
 
                 std::vector<Point> copy = mem_pts;
+                RssTracker::start();                               
                 MemTracker::start();
                 std::vector<Point> res = algo.fn(std::move(copy));
                 const std::size_t peak = MemTracker::peak;
                 MemTracker::stop();
+                const long long rss = RssTracker::peak_bytes();    
 
-                col.set_mem(ds.name, algo.name, peak);
+                col.set_mem(ds.name, algo.name, peak, rss);
             }
         }
 
@@ -465,10 +471,10 @@ static void exp1(const Config& c, Writter& w) {
  * @param w Escritor CSV de resultados.
  */
 static void exp2(const Config& c, Writter& w) {
-    const auto& datasets = gen::all_datasets();
+    const auto& datasets = c.fixed_n ? gen::h_datasets() : gen::all_datasets();
     const auto& add_gens = add::all_adders();
 
-    // 0. Warm-up previo al experimento (ambos caminos: incremental y recompute)
+    // 0. Warm-up previo al experimento
     {
         std::mt19937_64 rng_warm(c.seed);
         const std::vector<Point> warm_pts = gen::uniform_square(4096, rng_warm);
@@ -480,7 +486,9 @@ static void exp2(const Config& c, Writter& w) {
         }
     }
 
-    for (std::size_t n = c.lower; n <= c.upper; n *= c.step) {
+    for (std::size_t x = c.lower; x <= c.upper; x *= c.step) {       
+        const std::size_t n = c.fixed_n ? c.fixed_n : x;
+        gen::h_target = x;                                           
         Collector col;
         const std::size_t m = recalc_batch_size(c, n);
 
@@ -497,7 +505,7 @@ static void exp2(const Config& c, Writter& w) {
                     std::mt19937_64 rng_base(sd_base);
                     std::mt19937_64 rng_mut(sd_mut);
 
-                    const std::vector<Point> base_pts = shrink_half(ds.fn(n, rng_base));
+                    const std::vector<Point> base_pts = ds.fn(n, rng_base);
                     const std::vector<Point> new_pts  = add_gen.fn(base_pts, m, rng_mut);
 
                     // Construir hull previo directamente con DynamicHull FUERA del cronómetro
@@ -505,14 +513,15 @@ static void exp2(const Config& c, Writter& w) {
                     for (const Point& q : base_pts) {
                         initial_hull.insert(q);
                     }
+                    const std::size_t h = initial_hull.size();   // h del hull
 
-                    // Conjunto completo (antiguos + nuevos) para la línea base, FUERA del cronómetro
+                    // Conjunto completo (antiguos + nuevos) para la línea base
                     std::vector<Point> all_pts = base_pts;
                     all_pts.insert(all_pts.end(), new_pts.begin(), new_pts.end());
 
                     double inc_ms = 0.0, rec_ms = 0.0;
                     for (std::size_t k = 0; k < c.batch_k; ++k) {
-                        // (a) Incremental: clonar hull FUERA; insertar m puntos + extraer hull DENTRO
+                        // (a) Incremental: clonar hull FUERA; insertar m puntos + extraer hull
                         DynamicHull hull_state = initial_hull;
                         const auto a = Clock::now();
                         for (const Point& q : new_pts) {
@@ -522,7 +531,7 @@ static void exp2(const Config& c, Writter& w) {
                         const auto b = Clock::now();
                         inc_ms += ms_between(a, b);
 
-                        // (b) Línea base: Andrew desde cero sobre los n+m puntos (copia FUERA)
+                        // (b) Línea base: Andrew desde cero sobre los n+m puntos
                         std::vector<Point> copy = all_pts;
                         const auto a2 = Clock::now();
                         std::vector<Point> recomputed = andrew(std::move(copy));
@@ -530,16 +539,16 @@ static void exp2(const Config& c, Writter& w) {
                         rec_ms += ms_between(a2, b2);
                     }
 
-                    col.add_time(label, "dynamic_hull", inc_ms / static_cast<double>(c.batch_k));
-                    col.add_time(label, "recompute_andrew", rec_ms / static_cast<double>(c.batch_k));
+                    col.add_time(label, "dynamic_hull", inc_ms / static_cast<double>(c.batch_k), h);
+                    col.add_time(label, "recompute_andrew", rec_ms / static_cast<double>(c.batch_k), h);
                 }
 
-                // 2. Fase de Memoria (1 ejecución aislada sin cronómetro)
+                // 2. Fase de Memoria
                 {
                     std::mt19937_64 rng_mem_base(mix(mix(c.seed, 2000), n));
                     std::mt19937_64 rng_mem_mut(mix(mix(c.seed, 2001), n));
 
-                    const std::vector<Point> mem_base = shrink_half(ds.fn(n, rng_mem_base));
+                    const std::vector<Point> mem_base = ds.fn(n, rng_mem_base);
                     const std::vector<Point> mem_mut  = add_gen.fn(mem_base, m, rng_mem_mut);
 
                     std::vector<Point> mem_all = mem_base;
@@ -547,6 +556,7 @@ static void exp2(const Config& c, Writter& w) {
 
                     // (a) pico del hull dinámico (estructura + construcción + m inserciones + extracción)
                     long long changed = 0;
+                    RssTracker::start();
                     MemTracker::start();
                     DynamicHull mem_hull;
                     for (const Point& q : mem_base) mem_hull.insert(q);
@@ -554,16 +564,19 @@ static void exp2(const Config& c, Writter& w) {
                     std::vector<Point> mem_recalc = mem_hull.hull();
                     const std::size_t peak_dyn = MemTracker::peak;
                     MemTracker::stop();
+                    const long long rss_dyn = RssTracker::peak_bytes();
 
-                    // (b) pico de recalcular con Andrew sobre n+m puntos (copia de entrada fuera del rastreador)
+                    // (b) pico de recalcular con Andrew sobre n+m puntos
                     std::vector<Point> copy = mem_all;
+                    RssTracker::start();
                     MemTracker::start();
                     std::vector<Point> mem_rec = andrew(std::move(copy));
                     const std::size_t peak_rec = MemTracker::peak;
                     MemTracker::stop();
+                    const long long rss_rec = RssTracker::peak_bytes();
 
-                    col.set_mem(label, "dynamic_hull", peak_dyn, changed);
-                    col.set_mem(label, "recompute_andrew", peak_rec);
+                    col.set_mem(label, "dynamic_hull", peak_dyn, rss_dyn, changed);
+                    col.set_mem(label, "recompute_andrew", peak_rec, rss_rec);
                 }
             }
         }
@@ -582,9 +595,10 @@ static void print_usage(const char* prog) {
             << "  --exp <exp1|exp2|all>   Experimento a ejecutar (default: all)\n"
             << "  --out <archivo.csv>     Archivo CSV de salida (default: resultados.csv)\n"
             << "  --runs <N>              Repeticiones por tamaño (default: 32)\n"
-            << "  --lower <N>             Tamaño inicial n (default: 1024)\n"
-            << "  --upper <N>             Tamaño máximo n (default: 1048576)\n"
-            << "  --step <K>              Factor geométrico de n (default: 2)\n"
+            << "  --lower <N>             Tamaño inicial n (o h con --fixed-n) (default: 1024)\n"
+            << "  --upper <N>             Tamaño máximo n (o h con --fixed-n) (default: 1048576)\n"
+            << "  --step <K>              Factor geométrico de n (o h con --fixed-n) (default: 2)\n"
+            << "  --fixed-n <N>           n constante; --lower/--upper/--step recorren h (default: 0 = desactivado)\n"
             << "  --batch-k <K>           Ejecuciones internas por repetición (default: 1)\n"
             << "  --warmup-runs <W>       Iteraciones de warm-up previo (default: 3)\n"
             << "  --mut-ops <M>           Cantidad m de puntos agregados en exp2 (default: auto)\n"
@@ -612,6 +626,7 @@ int main(int argc, char** argv) {
         else if (arg == "--lower")        c.lower = std::stoull(next_val(arg));
         else if (arg == "--upper")        c.upper = std::stoull(next_val(arg));
         else if (arg == "--step")         c.step = std::stoull(next_val(arg));
+        else if (arg == "--fixed-n")      c.fixed_n = std::stoull(next_val(arg));
         else if (arg == "--batch-k")      c.batch_k = std::stoull(next_val(arg));
         else if (arg == "--warmup-runs")  c.warmup_runs = std::stoull(next_val(arg));
         else if (arg == "--mut-ops")      c.mut_ops = std::stoull(next_val(arg));
@@ -632,12 +647,16 @@ int main(int argc, char** argv) {
         std::cerr << "Parámetros inválidos (revisa runs, lower, upper, step >= 2, batch_k >= 1).\n";
         return EXIT_FAILURE;
     }
+    if (c.fixed_n && (c.lower < 3 || c.upper > c.fixed_n)) {
+        std::cerr << "Con --fixed-n, --lower/--upper recorren h: se exige 3 <= lower y upper <= fixed-n.\n";
+        return EXIT_FAILURE;
+    }
     if (c.exp != "exp1" && c.exp != "exp2" && c.exp != "all") {
         std::cerr << "Experimento inválido: " << c.exp << " (usa exp1, exp2 o all).\n";
         return EXIT_FAILURE;
     }
     if (c.runs < 30) {
-        std::cerr << "Aviso: --runs=" << c.runs << " < 30; el enunciado exige al menos 30 repeticiones.\n";
+        std::cerr << "Aviso: --runs=" << c.runs << " < 30; deben ser al menos 30 repeticiones.\n";
     }
 
     // 3 y 4. Abrir Writter y correr experimentos seleccionados

@@ -5,7 +5,7 @@ hull_gui.py -- Herramienta local para visualizar convex hull 2D.
 Solo usa la biblioteca estándar de Python. Los hulls los calculan nuestras
 implementaciones de C++ a través de `bin/hull_cli` (si no existe, se compila solo con g++).
 
-Pestaña "Algoritmos":  Elegir andrew / jarvis / quickhull / chan y generar puntos.
+Pestaña "Algoritmos":  Elegir andrew / jarvis / quickhull y generar puntos.
                        Muestra el resultado final, o lo explica con una animación paso a
                        paso que se puede saltar en cualquier momento.
 Pestaña "Inserción":   solo DynamicHull (cpp/dynamic_hull.hpp). Clic o coordenadas (x, y) para
@@ -33,7 +33,6 @@ ALGOS = {  # nombre en hull_cli -> (etiqueta, costo, fuente original)
     "andrew": ("Andrew (monotone chain)", "O(n log n)", "Andrew 1979"),
     "jarvis": ("Jarvis march", "O(n·h)", "Jarvis 1973"),
     "quickhull": ("QuickHull", "O(n log n) prom., O(n²) peor", "Eddy 1977; Barber et al. 1996"),
-    "chan": ("Chan", "O(n log h)", "Chan 1996"),
 }
 
 C = dict(bg="#ffffff", grid="#eceff2", pt="#8c959f", hull="#1a73e8", old="#d93025",
@@ -476,17 +475,11 @@ class App:
         cv.create_text(ox + 6, oy + s - 6, anchor="sw", fill="#656d76",
                        text=("DynamicHull" if inc else ALGOS[self.algo_name()][0]) + "  ·  0–1000")
 
-    GROUP_COLORS = ["#8e44ad", "#16a085", "#c0392b", "#2980b9", "#d35400", "#7f8c8d"]
-
     def draw_frame(self, fr):
         """Dibuja un cuadro de la animación (ver hull_steps.F)."""
         cv = self.canvas
         pts = self.s_points
         r = 1.5 if len(pts) > 600 else 3
-        for i, poly in enumerate(fr["polys"]):  # hulls de grupo (Chan)
-            if len(poly) >= 2:
-                flat = [c for p in poly + [poly[0]] for c in self.to_px(p)]
-                cv.create_line(*flat, fill=self.GROUP_COLORS[i % len(self.GROUP_COLORS)], width=1.3)
         if fr["closed"] and len(fr["chain"]) >= 3:
             cv.create_polygon(*[c for p in fr["chain"] for c in self.to_px(p)], fill="#dbe8fc", outline="")
         act = set(fr["active"])

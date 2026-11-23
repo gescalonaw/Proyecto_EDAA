@@ -7,7 +7,7 @@ Código del proyecto: 3 algoritmos de convex hull en C++, herramienta de visuali
 | Pedido | Dónde está |
 |---|---|
 | Algoritmos 2D a comparar | `cpp/hull_algorithms.hpp`: `andrew` (O(n log n)), `jarvis` (O(nh)), `quickhull` (O(n log n) promedio, O(n²) peor). |
-| Experimentos (≥ 5 datasets) | `cpp/generators.hpp` (7 datasets) y `cpp/bench.cpp` |
+| Experimentos (≥ 5 datasets) | `cpp/generators.hpp` (8 datasets) y `cpp/bench.cpp` |
 | Herramienta de visualización | `python/visualizer.py` (usa `bin/hull_cli`, que ejecuta el código C++) |
 | Inserción de puntos reaprovechando el hull | `cpp/dynamic_hull.hpp` (`DynamicHull`, adaptación de Andrew, O(log h) amortizado) |
 | Pruebas de corrección | `cpp/tests.cpp` (validador propio) y `python/validate_with_qhull.py` (validación externa con Qhull) |

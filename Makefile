@@ -1,5 +1,8 @@
 #   make               compila tests, bench y hull_cli
 #   make test          corre los tests de correctitud
+#   make gui           abre el visualizador de escritorio (python/hull_gui.py)
+#   make viz           abre el visualizador interactivo matplotlib (python/visualizer.py)
+#   make demo          genera imagenes de ejemplo en DEMO_DIR (default: figuras_demo)
 #   make run           ejecuta UN benchmark (exp1, exp2 o all) con los parametros dados
 #   make quick         prueba de humo
 #   make real          bateria real completa: test, env, real-n1, real-n2, real-h1, real-h2, control
@@ -11,15 +14,17 @@
 #   make sweep-m       (opcional) exp2 variando m con n fijo
 #   make env           guarda CPU, compilador y RAM en logs/entorno.txt
 #   make clean         borra binarios
-#   make distclean     borra binarios, resultados y logs (OJO: borra los CSV reales)
+#   make distclean     borra binarios, resultados y logs
 #   make clean-quick   borra solo la prueba de humo (resultados_quick)
 #   Parametros run:    EXP LOWER UPPER STEP REPS K MAX_MS SEED FIXED_N MUT_OPS OUT PIN CORE MIN_MB
 #   Parametros real:   REAL_LOWER REAL_UPPER REAL_M H_N H_LOWER H_UPPER REAL_MB SWEEP_N M_LIST
 
 CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra
+PYTHON   ?= python3
+DEMO_DIR ?= figuras_demo
 
-# bash + pipefail: si bench falla, el "| tee" no lo esconde (requiere Linux/WSL)
+# bash + pipefail (requiere Linux/WSL)
 SHELL        := /bin/bash
 .SHELLFLAGS  := -o pipefail -c
 
@@ -32,7 +37,7 @@ BIN      := bin
 OUT      ?= resultados
 LOGS     ?= logs
 
-# ---- parametros de "make run" (un solo benchmark) ----
+# parametros de "make run"
 EXP      ?= all
 LOWER    ?= 1024
 UPPER    ?= 1048576
@@ -45,43 +50,43 @@ FIXED_N  ?=
 MUT_OPS  ?=
 MIN_MB   ?= 300
 
-# ---- parametros de la bateria real ----
-# exp1/exp2 vs n: n = 1024 ... 2^20 (11 puntos)
+# parametros de la bateria real
+# exp1/exp2 vs n: n = 1024 a 2^20 (11 puntos)
 REAL_LOWER ?= 1024
 REAL_UPPER ?= 1048576
 # m fijo en exp2 (con el automatico m = n/10 hasta 8192 y 1000 desde 16384)
 REAL_M     ?= 1000
 # barrido de h: n fijo
 H_N        ?= 100000
-# h = 4 ... 16384 (13 puntos; Jarvis tarda ~4.6 s en el ultimo, bajo MAX_MS)
+# h = 4 a 16384 (13 puntos)
 H_LOWER    ?= 4
 H_UPPER    ?= 16384
-# RAM libre minima exigida en la bateria real (circle 2^20 en exp2 usa ~250 MB)
+# RAM libre minima exigida en la bateria real
 REAL_MB    ?= 1000
 # sweep-m: n fijo
 SWEEP_N    ?= 100000
 M_LIST     ?= 10 100 1000 10000 100000
 
-# La bateria real exige mas RAM libre que la prueba de humo (el memcheck hereda este valor)
+# La bateria real exige mas RAM libre que la prueba de humo
 real real-n1 real-n2 real-h1 real-h2 control sweep-m: MIN_MB := $(REAL_MB)
 
 HDR := $(wildcard cpp/*.hpp)
 
 .NOTPARALLEL:
-.PHONY: all test run quick real real-n1 real-n2 real-h1 real-h2 control sweep-m env \
+.PHONY: all test gui viz demo run quick real real-n1 real-n2 real-h1 real-h2 control sweep-m env \
         memcheck envcheck clean distclean clean-quick help
 
 all: $(BIN)/tests $(BIN)/bench $(BIN)/hull_cli
 
 help:
-	@sed -n '1,17p' Makefile
+	@sed -n '1,20p' Makefile
 
 # Prueba de correctitud 
 $(BIN)/tests: cpp/tests.cpp $(HDR)
 	mkdir -p $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
 
-# bench.cpp usa mem_tracker.hpp (sized deallocation): requiere -std=c++14 o superior
+# bench.cpp usa mem_tracker.hpp: requiere -std=c++14 o superior
 $(BIN)/bench: cpp/bench.cpp $(HDR)
 	mkdir -p $(BIN)
 	$(CXX) $(CXXFLAGS) -o $@ $<
@@ -92,6 +97,15 @@ $(BIN)/hull_cli: cpp/hull_cli.cpp $(HDR)
 
 test: $(BIN)/tests
 	./$(BIN)/tests
+
+gui: $(BIN)/hull_cli
+	$(PYTHON) python/hull_gui.py
+
+viz: $(BIN)/hull_cli
+	$(PYTHON) python/visualizer.py
+
+demo: $(BIN)/hull_cli
+	$(PYTHON) python/visualizer.py --demo $(DEMO_DIR)
 
 # Verificacion de memoria disponible (esto solo en Linux; si no existe /proc/meminfo se omite)
 memcheck:
@@ -112,7 +126,7 @@ envcheck:
 	@if [ -r /proc/meminfo ]; then \
 	awk '/SwapTotal/ {t=$$2} /SwapFree/ {f=$$2} END {if (t-f > 0) print "AVISO: hay swap en uso (" int((t-f)/1024) " MB); puede distorsionar los tiempos"}' /proc/meminfo; fi
 
-# Guarda el entorno de ejecucion para el informe (CPU, RAM, compilador, governor, swap)
+# Guarda el entorno de ejecucion (CPU, RAM, compilador, governor, swap)
 env:
 	mkdir -p $(LOGS)
 	( echo "== fecha =="; date; \
